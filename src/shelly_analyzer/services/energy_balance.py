@@ -623,8 +623,10 @@ def consumer_keys(cfg) -> List[str]:
     """Consumer device keys, each meter once (a meter behind another meter is
     inside that meter's reading; ``household_keys`` knows the wiring)."""
     from shelly_analyzer.services.net_display import household_keys
+    # Plug history on: switch devices (plugs) carry their own energy rows.
+    kinds = ("em", "switch") if getattr(getattr(cfg, "plug_history", None), "enabled", False) else ("em",)
     devs = [d for d in (getattr(cfg, "devices", []) or [])
-            if str(getattr(d, "kind", "em")) == "em"
+            if str(getattr(d, "kind", "em")) in kinds
             and device_role(cfg, getattr(d, "key", "")) in ("owner", "tenant")]
     allowed = household_keys(devs)
     return [str(d.key) for d in devs if str(d.key) in allowed]

@@ -120,6 +120,9 @@ def get_settings():
     tou = data.get("tou", {})
     if tou.get("urdb_api_key"):
         tou["urdb_api_key"] = "***"
+    ph = data.get("plug_history", {})
+    if ph.get("cloud_auth_key"):
+        ph["cloud_auth_key"] = "***"
     # Runtime flag (not persisted): true when running as a Home-Assistant add-on.
     # The Settings UI uses it to hide the in-app updater controls (updates are
     # managed via the add-on there). Prefixed with "_" so it's ignored on save.
@@ -394,6 +397,41 @@ def tou_urdb_search():
     return jsonify({"ok": True, "rates": rates})
 
 
+def _apply_device_names(state, names: dict) -> None:
+    """Rename devices {key: name}, save the config and restart the background services."""
+    from dataclasses import replace
+    from shelly_analyzer.io.config import save_config
+    new_devices = [replace(d, name=names[d.key]) if d.key in names else d for d in state.cfg.devices]
+    new_cfg = replace(state.cfg, devices=new_devices)
+    save_config(new_cfg, getattr(state, "_cfg_path", None) or Path("config.json"))
+    state.cfg = new_cfg
+    state.reload_config(new_cfg)
+    bg = getattr(state, "_bg", None)
+    if bg is not None:
+        try:
+            bg.reload(new_cfg)
+        except Exception:
+            logger.warning("Background reload after the cloud rename failed", exc_info=True)
+
+
+@bp.route("/api/settings/plug-cloud-import", methods=["POST"])
+def plug_cloud_import():
+    """Start the Shelly Cloud import (services/plug_history.py): device names,
+    and with {"history": true} (default) past consumption. Runs in the background."""
+    from shelly_analyzer.services.plug_history import JOB
+    state = _get_state()
+    obj = request.get_json(silent=True) or {}
+    started = JOB.start(state, lambda names: _apply_device_names(state, names),
+                        history=bool(obj.get("history", True)))
+    return jsonify({"ok": True, "started": started, "status": JOB.status()})
+
+
+@bp.route("/api/settings/plug-cloud-import", methods=["GET"])
+def plug_cloud_import_status():
+    from shelly_analyzer.services.plug_history import JOB
+    return jsonify({"ok": True, "status": JOB.status()})
+
+
 def _deep_merge(base: dict, updates: dict) -> None:
     """Recursively merge updates into base dict."""
     for k, v in updates.items():
@@ -426,6 +464,9 @@ def _restore_secrets(merged: dict, cfg: AppConfig) -> None:
     tou = merged.get("tou", {})
     if tou.get("urdb_api_key") == "***":
         tou["urdb_api_key"] = getattr(cfg.tou, "urdb_api_key", "")
+    ph = merged.get("plug_history", {})
+    if ph.get("cloud_auth_key") == "***":
+        ph["cloud_auth_key"] = getattr(cfg.plug_history, "cloud_auth_key", "")
 
 
 @bp.route("/api/upload-logo", methods=["POST"])

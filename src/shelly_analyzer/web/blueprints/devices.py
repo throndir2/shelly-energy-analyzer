@@ -110,13 +110,16 @@ def add_device():
     password = str(body.get("password", "") or "")
 
     supports_emdata = True
-    if not key:
+    # The mDNS scan sends a key but guesses the rest (always kind "em", no
+    # phases), which made plugs 3-phase meters. Probe unless the caller gave the
+    # full shape.
+    if not key or "phases" not in body:
         # Try to auto-detect – probe_device returns a DiscoveredDevice dataclass
         # and raises ValueError when the host is not a Shelly.
         try:
             from shelly_analyzer.services.discovery import probe_device
             result = probe_device(host, username=username, password=password)
-            key = host.replace(".", "_")
+            key = key or host.replace(".", "_")
             name = name or (result.model or key)
             kind = result.kind or kind
             gen = int(result.gen or gen or 0)
@@ -131,9 +134,9 @@ def add_device():
                     "error": "auth_required",
                     "message": f"{host} is password-protected. Provide username and password.",
                 }), 401
-            key = host.replace(".", "_")
+            key = key or host.replace(".", "_")
         except Exception:
-            key = host.replace(".", "_")
+            key = key or host.replace(".", "_")
 
     if not name:
         name = key

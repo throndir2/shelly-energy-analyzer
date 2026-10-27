@@ -34,6 +34,22 @@ def is_container() -> bool:
     return os.environ.get("SEA_CONTAINER", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def app_timezone() -> str:
+    """IANA name of the local time zone for day/month buckets.
+
+    The ``TZ`` environment variable (the container sets it), else Europe/Berlin
+    — the zone the app always used before."""
+    tz = os.environ.get("TZ", "").strip()
+    if tz:
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(tz)
+            return tz
+        except Exception:
+            pass
+    return "Europe/Berlin"
+
+
 def update_channel() -> str:
     """How this installation receives new versions — exactly one of:
 
@@ -88,6 +104,22 @@ class TouRate:
     end_hour: int = 22
     # If True, this rate only applies Monday–Friday (weekdays 0–4)
     weekdays_only: bool = False
+
+
+@dataclass(frozen=True)
+class PlugHistoryConfig:
+    """Energy history for plugs / switches without an EMData log (services/plug_history.py).
+
+    ``enabled`` records the live energy counter of every ``switch`` device into
+    the samples table and counts these devices in the Costs tab and reports.
+    ``cloud_server`` + ``cloud_auth_key`` (Shelly app: User settings ->
+    Authorization cloud key) allow importing device names and past consumption
+    from Shelly Cloud."""
+    enabled: bool = False
+    cloud_server: str = ""
+    cloud_auth_key: str = ""
+    # Days before now that are imported with hourly rows; older days get daily rows.
+    cloud_hourly_days: int = 31
 
 
 @dataclass(frozen=True)
@@ -1229,6 +1261,7 @@ class AppConfig:
     solar: SolarConfig = field(default_factory=SolarConfig)
     pv_source: PvSourceConfig = field(default_factory=PvSourceConfig)
     tou: TouConfig = field(default_factory=TouConfig)
+    plug_history: PlugHistoryConfig = field(default_factory=PlugHistoryConfig)
     anomaly: AnomalyConfig = field(default_factory=AnomalyConfig)
     co2: Co2Config = field(default_factory=Co2Config)
     spot_price: SpotPriceConfig = field(default_factory=SpotPriceConfig)
@@ -1773,6 +1806,14 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
         urdb_location=str(tou_raw.get("urdb_location", "") or "").strip(),
     )
 
+    ph_raw = raw.get("plug_history", {}) if isinstance(raw.get("plug_history"), dict) else {}
+    plug_history = PlugHistoryConfig(
+        enabled=bool(ph_raw.get("enabled", False)),
+        cloud_server=str(ph_raw.get("cloud_server", "") or "").strip(),
+        cloud_auth_key=str(ph_raw.get("cloud_auth_key", "") or "").strip(),
+        cloud_hourly_days=max(1, _coerce_int(ph_raw.get("cloud_hourly_days", 31), 31)),
+    )
+
     anomaly_raw = raw.get("anomaly", {}) if isinstance(raw.get("anomaly"), dict) else {}
     anomaly = AnomalyConfig(
         enabled=bool(anomaly_raw.get("enabled", AnomalyConfig.enabled)),
@@ -2179,6 +2220,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
         solar=solar,
         pv_source=pv_source,
         tou=tou,
+        plug_history=plug_history,
         anomaly=anomaly,
         co2=co2,
         spot_price=spot_price,
@@ -2551,6 +2593,12 @@ def save_config(cfg: AppConfig, path: Optional[Path] = None) -> Path:
             "urdb_rate": str(getattr(cfg.tou, "urdb_rate", "") or ""),
             "urdb_api_key": str(getattr(cfg.tou, "urdb_api_key", "") or ""),
             "urdb_location": str(getattr(cfg.tou, "urdb_location", "") or ""),
+        },
+        "plug_history": {
+            "enabled": bool(getattr(cfg.plug_history, "enabled", False)),
+            "cloud_server": str(getattr(cfg.plug_history, "cloud_server", "") or ""),
+            "cloud_auth_key": str(getattr(cfg.plug_history, "cloud_auth_key", "") or ""),
+            "cloud_hourly_days": int(getattr(cfg.plug_history, "cloud_hourly_days", 31) or 31),
         },
         "billing": {
             "issuer": {

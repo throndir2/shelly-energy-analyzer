@@ -985,6 +985,15 @@ class EnergyDB:
         ).fetchone()
         return int(row[0]) if row else 0
 
+    def sample_timestamps(self, device_key: str, start_ts: int, end_ts: int) -> List[int]:
+        """Sorted sample timestamps of a device in [start_ts, end_ts)."""
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT timestamp FROM samples WHERE device_key = ? AND timestamp >= ? AND timestamp < ? ORDER BY timestamp",
+            (device_key, int(start_ts), int(end_ts)),
+        ).fetchall()
+        return [int(r[0]) for r in rows]
+
     def max_timestamp(self, device_key: str) -> Optional[int]:
         """Return the latest sample timestamp (UTC epoch seconds) or None."""
         conn = self._conn()

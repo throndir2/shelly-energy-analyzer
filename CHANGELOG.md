@@ -1,5 +1,43 @@
 # Changelog
 
+## 17.7.2
+
+### Cost history for Shelly plugs, and an import from Shelly Cloud
+
+Plugs and other switch devices have no EMData log, so the app kept no history
+for them: the Costs tab, the PDF reports and the exports showed 0 for every
+plug, and only the Live tab worked.
+
+Settings -> Plug history has a new switch, **Record plug energy**. When it is
+on, the app reads the energy counter of each switch device from the live data
+(`Switch.GetStatus`, `aenergy.total`) and saves the energy of each minute as a
+normal sample row. The last reading is kept in `data/runtime/plug_energy.json`,
+so energy that a plug used while the app was stopped is added at the next start,
+spread over hourly rows. A counter reset never gives negative energy. With the
+switch on, switch devices also count in the Costs tab and the widget.
+
+**Import from Shelly Cloud** (optional, needs the Authorization cloud key from
+the Shelly app) copies the device names from the app and the past consumption:
+hourly values for the last 31 days and daily values back to January 1 of last
+year (the start of the retention window). It never writes into a time that
+already has samples and stops where local recording started, so a second run
+adds nothing twice. The key is masked in `GET /api/settings`. The name list uses
+the endpoint of the Shelly web app (`interface/device/get_all_lists`), which
+Shelly does not document; history uses `v2/statistics/power-consumption`.
+
+Fixes:
+
+- The mDNS scan added every Shelly as a 3-phase energy meter with EMData, so a
+  plug showed 0 W. Adding a device now probes it unless the request gives the
+  phase count, and a plug is added as a 1-phase switch without EMData.
+- Day, week and month buckets used the Europe/Berlin time zone everywhere. They
+  now use the `TZ` environment variable (the container sets it) and fall back to
+  Europe/Berlin.
+
+`tests/test_plug_history.py` covers the counter deltas and resets, the spread
+over hours, the sum of the tariff rows, the device matching, the import window
+and that a second import writes nothing.
+
 ## 17.7.1
 
 ### Electricity rate from the US Utility Rate Database (URDB)

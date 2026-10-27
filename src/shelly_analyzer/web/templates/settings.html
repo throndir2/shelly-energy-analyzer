@@ -371,6 +371,12 @@ const SECTIONS = [
       {key:"weekdays_only", label:"Weekdays only", type:"checkbox"},
     ], defaults:{name:"HT",price_eur_per_kwh:0.30,start_hour:6,end_hour:22,weekdays_only:false}},
   ]},
+  {id:"plug_history", title:"Plug history (Shelly plugs)", group:"Basic", hint:"Plugs and switches have no energy log of their own. With this on, the app saves their energy counter every minute and counts them in Costs and reports.", fields:[
+    {key:"plug_history.enabled", label:"Record plug energy", type:"checkbox"},
+    {key:"plug_history.cloud_server", label:"Shelly Cloud server", type:"text", hint:"Optional, e.g. shelly-73-eu.shelly.cloud. Empty = read from a plug."},
+    {key:"plug_history.cloud_auth_key", label:"Shelly Cloud key", type:"password", hint:"Shelly app → User settings → Authorization cloud key. Used only for ☁ Import: device names and past consumption."},
+    {key:"plug_history.cloud_hourly_days", label:"Days with hourly history", type:"number", hint:"Older days are imported as one value per day, back to January 1 of last year."},
+  ]},
   {id:"autosync", title:"Auto-sync", group:"Basic", fields:[
     {key:"ui.autosync_enabled", label:"Auto-sync active", type:"checkbox"},
     {key:"ui.autosync_interval_hours", label:"Interval (hours)", type:"number"},
@@ -867,9 +873,11 @@ function renderSection(s) {
   const testBtn = s.testBtn ? `<button class="secondary" onclick="testConnection('${s.testBtn}')">${T("settings.btn.test","🔌 Test")}</button>` : "";
   const urdbBtn = s.id === "pricing" ? `<button class="secondary" onclick="findUrdbRates()">${T("settings.btn.urdb_search","🔍 Find rates")}</button><button class="secondary" onclick="importUrdb()">${T("settings.btn.urdb_import","⬇ Import from URDB")}</button>` : "";
   const urdbBox = s.id === "pricing" ? `<div id="urdb-results"></div>` : "";
+  const cloudBtn = s.id === "plug_history" ? `<button class="secondary" onclick="importShellyCloud()">${T("settings.btn.cloud_import","☁ Import from Shelly Cloud")}</button>` : "";
+  const cloudBox = s.id === "plug_history" ? `<div id="cloud-import-status" class="hint" style="margin-top:8px"></div>` : "";
   return `<section id="sec-${s.id}"><h2>${tSection(s)}</h2>${hint}
-    <div class="grid2">${fieldsHtml}</div>${urdbBox}
-    <div class="section-actions">${testBtn}${urdbBtn}
+    <div class="grid2">${fieldsHtml}</div>${urdbBox}${cloudBox}
+    <div class="section-actions">${testBtn}${urdbBtn}${cloudBtn}
       <button onclick="saveSection('${s.id}')">${T("settings.btn.save","💾 Speichern")}</button>
     </div></section>`;
 }
@@ -3290,6 +3298,28 @@ function pickUrdbRate(label) {
   const el = document.querySelector('[data-key="tou.urdb_rate"]');
   if (el) el.value = label;
   importUrdb();
+}
+
+// Plug history: save this section, start the Shelly Cloud import, show progress.
+async function importShellyCloud() {
+  const box = document.getElementById("cloud-import-status");
+  try {
+    await saveSection("plug_history");
+    const r = await fetch("/api/settings/plug-cloud-import", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify({history:true})});
+    const j = await r.json();
+    if (!j.ok) { toast(T("settings.toast.error","Error: {err}",{err:j.error}), "error"); return; }
+    const poll = async () => {
+      const s = (await fetch("/api/settings/plug-cloud-import").then(x=>x.json())).status || {};
+      const el = document.getElementById("cloud-import-status");
+      if (el) el.textContent = s.error ? ("✕ " + s.error) : (s.message || "");
+      if (s.running) { setTimeout(poll, 2000); return; }
+      if (s.error) toast(T("settings.toast.error","Error: {err}",{err:s.error}), "error");
+      else toast("✓ " + (s.message || "Done"));
+    };
+    if (box) box.textContent = "…";
+    poll();
+  } catch(e) { toast(T("settings.toast.error","Error: {err}",{err:e.message}), "error"); }
 }
 
 async function reload() {

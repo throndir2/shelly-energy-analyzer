@@ -25,7 +25,7 @@ import pandas as pd
 import numpy as np
 
 from shelly_analyzer import __version__
-from shelly_analyzer.io.config import AppConfig, save_config
+from shelly_analyzer.io.config import AppConfig, app_timezone, save_config
 from shelly_analyzer.io.storage import Storage
 from shelly_analyzer.io.http import (
     ShellyHttp, HttpConfig, get_shelly_status, get_switch_status, set_switch_state,
@@ -646,6 +646,10 @@ class ActionDispatcher:
             except Exception:
                 logger.debug("warming '%s' failed", action, exc_info=True)
 
+    def _plug_history_on(self) -> bool:
+        """Plug history on: switch devices have energy rows and count as consumers."""
+        return bool(getattr(getattr(self.cfg, "plug_history", None), "enabled", False))
+
     def _refresh_computed(self, force: bool = False) -> None:
         """Rebuild the computed-device snapshot without blocking readers.
 
@@ -1035,7 +1039,7 @@ class ActionDispatcher:
         # local tz (Europe/Berlin) so hour/day/week/month buckets line up with
         # what the user sees on their clock.
         try:
-            _tz_local = "Europe/Berlin"
+            _tz_local = app_timezone()
             if getattr(ts, "dt", None) is not None:
                 if ts.dt.tz is None:
                     ts = ts.dt.tz_localize("UTC").dt.tz_convert(_tz_local).dt.tz_localize(None)
@@ -1112,7 +1116,7 @@ class ActionDispatcher:
         # day/week/month boundaries match the raw path and the user's clock.
         ts = pd.to_datetime(df["hour_ts"], unit="s", errors="coerce")
         try:
-            ts = ts.dt.tz_localize("UTC").dt.tz_convert("Europe/Berlin").dt.tz_localize(None)
+            ts = ts.dt.tz_localize("UTC").dt.tz_convert(app_timezone()).dt.tz_localize(None)
         except Exception:
             pass
         tmp = pd.DataFrame({"timestamp": ts, "energy_kwh": kwh}).dropna(subset=["timestamp"]).sort_values("timestamp")
@@ -1694,9 +1698,9 @@ class ActionDispatcher:
             idx = out.index
             if isinstance(idx, pd.DatetimeIndex):
                 if idx.tz is None:
-                    out.index = idx.tz_localize("UTC").tz_convert("Europe/Berlin").tz_localize(None)
+                    out.index = idx.tz_localize("UTC").tz_convert(app_timezone()).tz_localize(None)
                 else:
-                    out.index = idx.tz_convert("Europe/Berlin").tz_localize(None)
+                    out.index = idx.tz_convert(app_timezone()).tz_localize(None)
         except Exception:
             pass
         try:
@@ -2224,7 +2228,7 @@ class ActionDispatcher:
             if mode == "custom":
                 if not start_date:
                     raise ValueError("custom requires start_date (TT.MM.JJJJ)")
-                dt = datetime.strptime(start_date, "%d.%m.%Y").replace(tzinfo=ZoneInfo("Europe/Berlin"))
+                dt = datetime.strptime(start_date, "%d.%m.%Y").replace(tzinfo=ZoneInfo(app_timezone()))
                 a = int(dt.timestamp())
                 b = now
                 if b <= a:
@@ -2364,7 +2368,7 @@ class ActionDispatcher:
             if start is not None and end is not None and end < start:
                 start, end = end, start
 
-            _tz_s = ZoneInfo("Europe/Berlin")
+            _tz_s = ZoneInfo(app_timezone())
 
             if start is not None:
                 start_d = pd.Timestamp(start).date()
@@ -2578,7 +2582,7 @@ class ActionDispatcher:
         # --- Widget data (compact JSON for iOS Scriptable) ---
         if action == "widget":
             try:
-                _tz = ZoneInfo("Europe/Berlin")
+                _tz = ZoneInfo(app_timezone())
                 _now = datetime.now(_tz)
                 _today_start = _now.replace(hour=0, minute=0, second=0, microsecond=0)
                 _month_start = _today_start.replace(day=1)
@@ -2598,7 +2602,7 @@ class ActionDispatcher:
                 _fixed_ct = round(_unit * 100, 2)
 
                 _all_devs = [d for d in (self.cfg.devices or [])
-                             if str(getattr(d, "kind", "em")) != "switch"]
+                             if str(getattr(d, "kind", "em")) != "switch" or self._plug_history_on()]
                 _widget_keys = str(getattr(_profile, "devices", "") or getattr(self.cfg.ui, "widget_devices", "") or "").strip()
                 if _widget_keys:
                     _allowed = {k.strip() for k in _widget_keys.split(",") if k.strip()}
@@ -2868,7 +2872,7 @@ class ActionDispatcher:
             if _cached and (_cache_now - _cached[0]) < self._costs_resp_ttl:
                 return _cached[1]
             try:
-                _tz = ZoneInfo("Europe/Berlin")
+                _tz = ZoneInfo(app_timezone())
                 _now = datetime.now(_tz)
                 _today_start = _now.replace(hour=0, minute=0, second=0, microsecond=0)
                 _week_start = _today_start - timedelta(days=_now.weekday())
@@ -2984,8 +2988,10 @@ class ActionDispatcher:
                         total_cost += float(grp_kwh) * day_price
                     return total_cost
 
+                # Switches are left out (they usually hang behind a meter), unless
+                # plug history is on: then plugs carry their own energy rows.
                 _cost_devices = [d for d in (self.cfg.devices or [])
-                                if str(getattr(d, "kind", "em")) != "switch"]
+                                if str(getattr(d, "kind", "em")) != "switch" or self._plug_history_on()]
 
                 _spot_cfg = getattr(self.cfg, "spot_price", None)
                 _use_dynamic_web = (
@@ -3419,7 +3425,7 @@ class ActionDispatcher:
                 anchor = pd.Timestamp(date.today())
             anchor = pd.Timestamp(anchor)
 
-            _tz_r = ZoneInfo("Europe/Berlin")
+            _tz_r = ZoneInfo(app_timezone())
 
             is_monthly = period in {"month", "mon", "m"}
 
@@ -4791,7 +4797,7 @@ class ActionDispatcher:
                 dirty_thr = float(getattr(co2_cfg, "dirty_threshold_g_per_kwh", 400.0))
                 cross_border = bool(getattr(co2_cfg, "cross_border_flows", False))
 
-                _tzc = ZoneInfo("Europe/Berlin")
+                _tzc = ZoneInfo(app_timezone())
                 _nowc = datetime.now(_tzc)
                 _todayc = _nowc.replace(hour=0, minute=0, second=0, microsecond=0)
                 _week_start = _todayc - timedelta(days=_nowc.weekday())
@@ -6004,8 +6010,8 @@ class ActionDispatcher:
                             t0 = pd.Timestamp(lab).normalize()
                             t1 = t0 + pd.Timedelta(days=1)
                         try:
-                            t0 = t0.tz_localize("Europe/Berlin", nonexistent="shift_forward", ambiguous="NaT")
-                            t1 = t1.tz_localize("Europe/Berlin", nonexistent="shift_forward", ambiguous="NaT")
+                            t0 = t0.tz_localize(app_timezone(), nonexistent="shift_forward", ambiguous="NaT")
+                            t1 = t1.tz_localize(app_timezone(), nonexistent="shift_forward", ambiguous="NaT")
                         except Exception:
                             pass
                         return int(t0.timestamp()), int(t1.timestamp())
@@ -6124,7 +6130,7 @@ class ActionDispatcher:
                 if _solar_pl is not None:
                     try:
                         from datetime import datetime as _dtm_fi
-                        _tz_fi = ZoneInfo("Europe/Berlin")
+                        _tz_fi = ZoneInfo(app_timezone())
                         _feed_ct_arr = []
                         for _rg_fi in ranges:
                             _bts_fi = _rg_fi[0] if _rg_fi else None

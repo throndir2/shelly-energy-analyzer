@@ -133,6 +133,12 @@
     "urdb_api_key": "",
     "urdb_location": ""
   },
+  "plug_history": {
+    "enabled": false,
+    "cloud_server": "",
+    "cloud_auth_key": "",
+    "cloud_hourly_days": 31
+  },
   "billing": {
     "issuer": {
       "name": "Example Company Ltd",

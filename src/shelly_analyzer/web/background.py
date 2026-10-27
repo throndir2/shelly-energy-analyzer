@@ -22,7 +22,7 @@ from shelly_analyzer.i18n import (format_datetime_local, format_number_local,
                                   month_name_local, normalize_lang,
                                   weekday_name_local, weekday_names_local,
                                   t as _t)
-from shelly_analyzer.io.config import AppConfig
+from shelly_analyzer.io.config import AppConfig, app_timezone
 from shelly_analyzer.io.storage import Storage
 from shelly_analyzer.services.webdash import LivePoint, LiveStateStore
 
@@ -70,6 +70,10 @@ class BackgroundServiceManager:
         # state[device_key] = {"date": date, "kwh": float, "last_ts": int, "last_p": float}
         self._today_state: Dict[str, Dict[str, Any]] = {}
         self._today_kwh_lock = threading.Lock()
+
+        # Energy history for plugs without an EMData log (services/plug_history.py).
+        # Created on first use and kept across reload(), so the counter baseline survives.
+        self._plug_recorder = None
 
         # NILM (non-intrusive load monitoring) transition learners per device
         self._nilm_learners: Dict[str, Any] = {}
@@ -173,6 +177,15 @@ class BackgroundServiceManager:
         self.stop_all()
         self.start_all()
 
+    @property
+    def plug_recorder(self):
+        """The plug energy recorder (services/plug_history.py)."""
+        if self._plug_recorder is None:
+            from shelly_analyzer.services.plug_history import PlugEnergyRecorder
+            self._plug_recorder = PlugEnergyRecorder(
+                self.storage.db, Path(self.out_dir) / "data" / "runtime" / "plug_energy.json")
+        return self._plug_recorder
+
     # ── Live Polling ───────────────────────────────────────────────────
 
     def _start_live_poller(self) -> None:
@@ -262,6 +275,14 @@ class BackgroundServiceManager:
                 cost_today = kwh_today * _price_for(datetime.fromtimestamp(ts_i).date())
                 # Feed NILM learner
                 self._observe_nilm(sample.device_key, ts_i, power_total)
+                # Plugs have no EMData log: record their energy counter instead.
+                if getattr(getattr(self.cfg, "plug_history", None), "enabled", False):
+                    try:
+                        _pd = next((d for d in self.cfg.devices if d.key == sample.device_key), None)
+                        if _pd is not None and str(getattr(_pd, "kind", "")) == "switch":
+                            self.plug_recorder.observe(sample.device_key, ts_i, raw)
+                    except Exception:
+                        logger.debug("plug energy record failed", exc_info=True)
 
                 point = LivePoint(
                     ts=int(sample.ts or time.time()),
@@ -1715,7 +1736,7 @@ class BackgroundServiceManager:
     def _start_summary_scheduler(self) -> None:
         """Start a background thread that checks for scheduled summaries."""
         from zoneinfo import ZoneInfo
-        tz = ZoneInfo("Europe/Berlin")
+        tz = ZoneInfo(app_timezone())
         now = datetime.now(tz)
         # Initialise to today so we don't immediately fire on startup.
         # The summary will only be sent once per day, *after* the scheduled time,
@@ -1789,7 +1810,7 @@ class BackgroundServiceManager:
         import calendar
         from zoneinfo import ZoneInfo
 
-        tz = ZoneInfo("Europe/Berlin")
+        tz = ZoneInfo(app_timezone())
         now = datetime.now(tz)
         if anchor is not None:
             yesterday = datetime(anchor.year, anchor.month, anchor.day, tzinfo=tz)
@@ -2206,7 +2227,7 @@ class BackgroundServiceManager:
         import calendar
         from zoneinfo import ZoneInfo
 
-        tz = ZoneInfo("Europe/Berlin")
+        tz = ZoneInfo(app_timezone())
         now = datetime.now(tz)
         if anchor is not None:
             last_month_start = datetime(anchor.year, anchor.month, 1, tzinfo=tz)
@@ -3141,7 +3162,7 @@ class BackgroundServiceManager:
     def _summary_loop(self) -> None:
         """Periodically check if daily/monthly summaries are due."""
         from zoneinfo import ZoneInfo
-        tz = ZoneInfo("Europe/Berlin")
+        tz = ZoneInfo(app_timezone())
 
         # Wait for services to be ready
         self._stop_event.wait(10.0)
