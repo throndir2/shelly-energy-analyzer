@@ -41,3 +41,9 @@ To go back to the previous image by hand:
 ```
 
 The script uses no GitHub Actions. A push to `throndir2-plug-history` starts no workflow.
+
+## Rollback copy on Nahida
+
+The old stack is in `/Volume2/apps/shelly-energy-analyzer` on Nahida (stopped with
+`docker compose down` on 2026-11-22, image `shelly-energy-analyzer:17.7.2-6a60666` kept).
+Its data is the state at the move. Start it only after you stop the Rukkhadevata stack.

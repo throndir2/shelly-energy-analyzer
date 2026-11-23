@@ -42,7 +42,7 @@ $helpers = @'
 health() {
   i=0
   while [ $i -lt 60 ]; do
-    if curl -fsS -m 3 http://127.0.0.1:8765/api/version; then echo; return 0; fi
+    if curl -fsS -m 3 http://127.0.0.1:8765/api/version 2>/dev/null; then echo; return 0; fi
     i=$((i+1)); sleep 2
   done
   return 1
