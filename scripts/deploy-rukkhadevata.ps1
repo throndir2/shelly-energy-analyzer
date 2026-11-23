@@ -73,7 +73,8 @@ try {
     Write-Host "Deploying $Ref as $image to ${SshHost}:$StackRoot"
 
     $tar = Join-Path $env:TEMP "shelly-energy-analyzer-$tag.tar"
-    git archive --format=tar -o $tar "$Ref"
+    # autocrlf would give the Linux image CRLF shell scripts.
+    git -c core.autocrlf=false -c core.eol=lf archive --format=tar -o $tar "$Ref"
     if ($LASTEXITCODE -ne 0) { throw 'git archive failed.' }
     Invoke-Remote 'test -f compose.yaml || { echo "compose.yaml is missing in the stack root"; exit 1; }'
     scp -q $tar "${SshHost}:$StackRoot/src.tar"
